@@ -46,3 +46,4 @@ C:\Users\LENOVO\Desktop\lthdt\GKOOP\obj\Debug\GKOOP.RegisterForm.resources
 C:\Users\LENOVO\Desktop\lthdt\GKOOP\obj\Debug\GKOOP.TeacherForm.resources
 C:\Users\LENOVO\Desktop\lthdt\GKOOP\obj\Debug\GKOOP.ExamEditorDialog.resources
 C:\Users\LENOVO\Desktop\lthdt\GKOOP\obj\Debug\GKOOP.QuestionEditorDialog.resources
+C:\Users\LENOVO\Desktop\lthdt\GKOOP\obj\Debug\GKOOP.AdminForm.resources

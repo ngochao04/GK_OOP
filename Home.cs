@@ -8,28 +8,26 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Npgsql;
 using System.IO;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using NpgsqlTypes;
-
-
 
 namespace GKOOP
 {
     public partial class Home : Form
     {
         private Button btnManageExams;
-        private Button btnChangeAvatar;
+        private Button btnAdmin;
+
         public class CurrentUser
         {
             public Guid Id; public string Username; public string FullName; public string Role;
         }
         private CurrentUser _user;
+
         public Home()
         {
-            
             InitializeComponent();
-            
+
+            // Nút vào khu giáo viên
             btnManageExams = new Button
             {
                 Name = "btnManageExams",
@@ -40,38 +38,47 @@ namespace GKOOP
             };
             pnlHeader.Controls.Add(btnManageExams);
 
-
             btnManageExams.Click += async (_, __) =>
             {
                 using (var f = new TeacherForm(_user))
                 {
                     f.ShowDialog(this);
                     await LoadExamsAsync();
+                    await LoadHistoryAsync();
+                    await UpdateRankForSelectedExamAsync();
+                    await LoadLeaderboardForSelectedExamAsync();
                     UpdateKpis();
                 }
             };
+
             BuildHeaderExtras();
             WireEvents();
             StartUiClock();
             ApplyAuthState();
         }
+
         private void BuildHeaderExtras()
         {
-            btnChangeAvatar = new Button
+            btnAdmin = new Button
             {
-                Name = "btnChangeAvatar",
-                Text = "Đổi ảnh",
-                Width = 90,
+                Name = "btnAdmin",
+                Text = "Quản trị",
                 Dock = DockStyle.Right,
-                Visible = false   
+                Width = 100,
+                Visible = false
             };
+            pnlHeader.Controls.Add(btnAdmin);
 
-           
-            pnlHeader.Controls.Add(btnChangeAvatar);
-
+            btnAdmin.Click += (_, __) =>
+            {
+                using (var f = new AdminDashboardForm(_user))
+                    f.ShowDialog(this);
+            };
 
             pictureBox1.Cursor = Cursors.Hand;
         }
+
+        #region Avatar
         private async Task LoadAvatarAsync(Guid userId)
         {
             try
@@ -86,24 +93,18 @@ namespace GKOOP
                         cmd.Parameters.AddWithValue("@id", userId);
                         var obj = await cmd.ExecuteScalarAsync();
 
-                        if (obj == null || obj == DBNull.Value)
-                        {
-                            // ảnh mặc định
-                            pictureBox1.Image = SystemIcons.Information.ToBitmap();
-                        }
-                        else
-                        {
-                            pictureBox1.Image = BytesToImage((byte[])obj);
-                        }
+                        pictureBox1.Image = (obj == null || obj == DBNull.Value)
+                            ? SystemIcons.Information.ToBitmap()
+                            : BytesToImage((byte[])obj);
                     }
                 }
             }
             catch
             {
-                // nếu lỗi, dùng ảnh mặc định để UI không trống
                 pictureBox1.Image = SystemIcons.Information.ToBitmap();
             }
         }
+
         private async Task ChangeAvatarAsync()
         {
             if (_user == null) return;
@@ -116,10 +117,8 @@ namespace GKOOP
 
                 if (ofd.ShowDialog(this) != DialogResult.OK) return;
 
-                // đọc file
-                byte[] data = ImageFileToBytes(ofd.FileName);
+                byte[] data = File.ReadAllBytes(ofd.FileName);
 
-                // lưu DB
                 var cs = ConfigurationManager.ConnectionStrings["PgConn"].ConnectionString;
                 using (var conn = new NpgsqlConnection(cs))
                 {
@@ -133,127 +132,64 @@ namespace GKOOP
                         await cmd.ExecuteNonQueryAsync();
                     }
                 }
-
-                // hiển thị lại ngay
                 pictureBox1.Image = Image.FromFile(ofd.FileName);
             }
         }
-
+        #endregion
 
         private void WireEvents()
         {
-            btnTest.Click += async (s, e) => await TestPgConnectionAsync();
             btnLogin.Click += (s, e) => DoLogin();
             btnStartExam.Click += (s, e) => StartSelectedExam();
 
             grdExams.SelectionChanged += async (s, e) =>
-            await UpdateRankForSelectedExamAsync();
-            btnChangeAvatar.Click += async (s, e) => await ChangeAvatarAsync();
+            {
+                await UpdateRankForSelectedExamAsync();
+                await LoadLeaderboardForSelectedExamAsync();
+            };
             pictureBox1.Click += async (s, e) => await ChangeAvatarAsync();
         }
+
         private void StartUiClock()
         {
             var t = new System.Windows.Forms.Timer { Interval = 1000 };
             t.Tick += (_, __) => sbClock.Text = DateTime.Now.ToString("HH:mm:ss");
             t.Start();
         }
+
         private async void Home_Load(object sender, EventArgs e)
         {
-            
             await LoadExamsAsync();
+            await LoadHistoryAsync();
             await UpdateRankForSelectedExamAsync();
+            await LoadLeaderboardForSelectedExamAsync();
+            await LoadNewsListAsync();
             UpdateKpis();
         }
+
         private static Image BytesToImage(byte[] bytes)
         {
             if (bytes == null || bytes.Length == 0) return null;
             using (var ms = new MemoryStream(bytes))
-            {
                 return Image.FromStream(ms);
-            }
         }
 
-        private static byte[] ImageFileToBytes(string path)
-        {
-            return File.ReadAllBytes(path);
-        }
+        #region Misc empty handlers (VS designer)
+        private void pnlHeader_Paint(object sender, PaintEventArgs e) { }
+        private void tblRoot_Paint(object sender, PaintEventArgs e) { }
+        private void grpUser_Enter(object sender, EventArgs e) { }
+        private void groupBox1_Enter(object sender, EventArgs e) { }
+        private void statusStrip1_ItemClicked(object sender, ToolStripItemClickedEventArgs e) { }
+        private void lblOpenExams_Click(object sender, EventArgs e) { }
+        private void btnSetting_Click(object sender, EventArgs e) { }
+        private void btnSetting_Click_1(object sender, EventArgs e) { }
+        #endregion
 
-        private void pnlHeader_Paint(object sender, PaintEventArgs e)
-        {
+        #region DB utilities
+      
+        #endregion
 
-        }
-
-        private void tblRoot_Paint(object sender, PaintEventArgs e)
-        {
-
-        }
-
-        private void grpUser_Enter(object sender, EventArgs e)
-        {
-
-        }
-
-        private void groupBox1_Enter(object sender, EventArgs e)
-        {
-
-        }
-
-        private void statusStrip1_ItemClicked(object sender, ToolStripItemClickedEventArgs e)
-        {
-
-        }
-  
-
-        private async Task TestPgConnectionAsync()
-        {
-            var connStr = ConfigurationManager.ConnectionStrings["PgConn"]?.ConnectionString;
-            if (string.IsNullOrWhiteSpace(connStr))
-            {
-                MessageBox.Show("Không thấy chuỗi kết nối 'PgConn' trong App.config", "Lỗi");
-                return;
-            }
-
-            btnTest.Enabled = false;
-            Cursor = Cursors.WaitCursor;
-
-            try
-            {
-                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
-                using (var conn = new NpgsqlConnection(connStr))
-                {
-                    await conn.OpenAsync(cts.Token);
-
-                    using (var cmd = new NpgsqlCommand("select current_database(), current_user, version()", conn))
-                    using (var rd = await cmd.ExecuteReaderAsync(cts.Token))
-                    {
-                        if (await rd.ReadAsync(cts.Token))
-                        {
-                            var db = rd.GetString(0);
-                            var user = rd.GetString(1);
-                            var ver = rd.GetString(2);
-
-                            MessageBox.Show($"Kết nối OK!\nDB: {db}\nUser: {user}\n{ver}", "PostgreSQL");
-                        
-                            sbDB.Text = "DB: Online";
-                            lblConn.Text = $"DB: {db} (as {user})";
-                            lblConn.ForeColor = System.Drawing.Color.ForestGreen;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Kết nối FAIL:\n" + ex.Message, "PostgreSQL");
-                sbDB.Text = "DB: Offline";
-                lblConn.Text = "DB: Offline";
-                lblConn.ForeColor = System.Drawing.Color.Firebrick;
-            }
-            finally
-            {
-                Cursor = Cursors.Default;
-                btnTest.Enabled = true;
-            }
-        }
+        #region Auth state
         private void ApplyAuthState()
         {
             if (_user == null)
@@ -261,28 +197,34 @@ namespace GKOOP
                 lblFullName.Text = "Khách"; lblRole.Text = "Chưa đăng nhập";
                 sbUser.Text = "User: Khách";
                 btnLogin.Text = "Đăng nhập…";
-                btnChangeAvatar.Visible = false;
                 pictureBox1.Image = SystemIcons.Information.ToBitmap();
                 btnStartExam.Enabled = false;
-                if (btnManageExams != null)   
-                    btnManageExams.Visible = false;
+                if (btnManageExams != null) btnManageExams.Visible = false;
+                if (btnAdmin != null) btnAdmin.Visible = false;
+                // Ẩn bảng điểm nếu chưa đăng nhập / không phải GV
+                if (grpLeaderboard != null) grpLeaderboard.Visible = false;
+                if (grdLeaderboard != null) grdLeaderboard.DataSource = null;
+
                 return;
             }
-            else
-            {
-                lblFullName.Text = _user.FullName;
-                lblRole.Text = _user.Role;
-                sbUser.Text = $"User: {_user.Username}";
-                btnLogin.Text = "Đăng xuất";
-                btnChangeAvatar.Visible = true;
-                btnStartExam.Enabled = string.Equals(_user.Role, "STUDENT", StringComparison.OrdinalIgnoreCase);
-                btnTest.Visible = !_user.Role.Equals("STUDENT", StringComparison.OrdinalIgnoreCase);
 
-                var isTeacher = _user.Role.Equals("TEACHER", StringComparison.OrdinalIgnoreCase);
-                btnManageExams.Visible = isTeacher;
-            }
-            
+            lblFullName.Text = _user.FullName;
+            lblRole.Text = _user.Role;
+            sbUser.Text = $"User: {_user.Username}";
+            btnLogin.Text = "Đăng xuất";
+            btnStartExam.Enabled = string.Equals(_user.Role, "STUDENT", StringComparison.OrdinalIgnoreCase);
+
+            var isTeacher = _user.Role.Equals("TEACHER", StringComparison.OrdinalIgnoreCase);
+            btnManageExams.Visible = isTeacher;
+            var isAdmin = _user != null && _user.Role.Equals("ADMIN", StringComparison.OrdinalIgnoreCase);
+            if (btnAdmin != null) btnAdmin.Visible = isAdmin;
+
+            // Bảng điểm chỉ dành cho GV ad
+            bool canSeeLeaderboard = isTeacher || isAdmin;
+            grpLeaderboard.Visible = canSeeLeaderboard;
+            if (!canSeeLeaderboard && grdLeaderboard != null) grdLeaderboard.DataSource = null;
         }
+
         private async void DoLogin()
         {
             if (_user != null)
@@ -290,6 +232,9 @@ namespace GKOOP
                 _user = null;
                 ApplyAuthState();
                 lblMyRank.Text = "Xếp hạng\n—";
+                await LoadHistoryAsync();
+                UpdateKpis();
+                await LoadNewsListAsync();
                 return;
             }
 
@@ -305,14 +250,20 @@ namespace GKOOP
                         Role = f.Result.Role
                     };
                     ApplyAuthState();
-                    await LoadExamsAsync();
+
                     await LoadAvatarAsync(_user.Id);
+                    await LoadExamsAsync();
+                    await LoadHistoryAsync();
                     await UpdateRankForSelectedExamAsync();
+                    await LoadLeaderboardForSelectedExamAsync();
+                    await LoadNewsListAsync();
+                    UpdateKpis();
                 }
             }
-
         }
+        #endregion
 
+        #region Load exams & history
         private class ExamRow
         {
             public Guid Id { get; set; }
@@ -327,18 +278,18 @@ namespace GKOOP
         {
             var connStr = ConfigurationManager.ConnectionStrings["PgConn"].ConnectionString;
             const string sql = @"
-    SELECT e.id,
-           e.name AS ""Name"",
-           s.name AS ""Subject"",
-           e.total_questions AS ""TotalQuestions"",
-           (e.duration_minutes || '''') AS ""Duration"",
-           COALESCE(to_char(e.start_time,'DD/MM HH24:MI'),'—') || ' – ' ||
-           COALESCE(to_char(e.end_time  ,'DD/MM HH24:MI'),'—') AS ""Window""
-    FROM exams e
-    JOIN subjects s ON s.id = e.subject_id
-    WHERE (e.start_time IS NULL OR now() >= e.start_time)
-      AND (e.end_time   IS NULL OR now() <= e.end_time)
-    ORDER BY e.start_time NULLS LAST, e.name;";
+SELECT e.id,
+       e.name AS ""Name"",
+       s.name AS ""Subject"",
+       e.total_questions AS ""TotalQuestions"",
+       (e.duration_minutes || '''') AS ""Duration"",
+       COALESCE(to_char(e.start_time,'DD/MM HH24:MI'),'—') || ' – ' ||
+       COALESCE(to_char(e.end_time  ,'DD/MM HH24:MI'),'—') AS ""Window""
+FROM exams e
+JOIN subjects s ON s.id = e.subject_id
+WHERE (e.start_time IS NULL OR now() >= e.start_time)
+  AND (e.end_time   IS NULL OR now() <= e.end_time)
+ORDER BY e.start_time NULLS LAST, e.name;";
 
             using (var conn = new NpgsqlConnection(connStr))
             {
@@ -359,11 +310,75 @@ namespace GKOOP
                             Window = rd.GetString(5)
                         });
                     }
-
                     grdExams.AutoGenerateColumns = false;
                     grdExams.DataSource = rows;
                 }
             }
+        }
+        // Thông Báo
+        private sealed class NewsListItem
+        {
+            public Guid Id { get; set; }
+            public string Title { get; set; }
+            public DateTime? PublishedAt { get; set; }
+        }
+
+        private async Task LoadNewsListAsync()
+        {
+            lstNews.BeginUpdate();
+            lstNews.Items.Clear();
+
+            var cs = ConfigurationManager.ConnectionStrings["PgConn"]?.ConnectionString;
+            if (string.IsNullOrWhiteSpace(cs))
+            {
+                lstNews.EndUpdate();
+                return;
+            }
+
+            const string sql = @"
+        SELECT id, title, published_at
+        FROM news
+        ORDER BY published_at DESC NULLS LAST, id DESC;";
+
+            var rows = new List<NewsListItem>();
+            using (var conn = new NpgsqlConnection(cs))
+            {
+                await conn.OpenAsync();
+                using (var cmd = new NpgsqlCommand(sql, conn))
+                using (var rd = await cmd.ExecuteReaderAsync())
+                {
+                    while (await rd.ReadAsync())
+                    {
+                        rows.Add(new NewsListItem
+                        {
+                            Id = rd.GetGuid(0),
+                            Title = rd.GetString(1),
+                            PublishedAt = rd.IsDBNull(2) ? (DateTime?)null : rd.GetDateTime(2)
+                        });
+                    }
+                }
+            }
+
+            foreach (var r in rows)
+            {
+                var timeText = r.PublishedAt.HasValue
+                    ? r.PublishedAt.Value.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                    : "—";
+
+                var item = new ListViewItem(r.Title);
+                item.SubItems.Add(timeText);
+                item.Tag = r.Id; // nếu sau này cần mở chi tiết
+                lstNews.Items.Add(item);
+            }
+
+            // auto-size cột tiêu đề vừa khít (tuỳ chọn)
+            if (lstNews.Columns.Count >= 2)
+            {
+                lstNews.Columns[0].Width = -2; // AutoSize
+                lstNews.Columns[1].Width = 160;
+            }
+
+            lstNews.EndUpdate();
         }
         private class HistoryRow
         {
@@ -381,14 +396,14 @@ namespace GKOOP
             if (string.IsNullOrWhiteSpace(cs)) return;
 
             const string sql = @"
-        SELECT e.name,
-               a.score,
-               a.started_at,
-               a.submitted_at
-        FROM attempts a
-        JOIN exams e ON e.id = a.exam_id
-        WHERE a.user_id = @uid
-        ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC;";
+SELECT e.name,
+       a.score,
+       a.started_at,
+       a.submitted_at
+FROM attempts a
+JOIN exams e ON e.id = a.exam_id
+WHERE a.user_id = @uid
+ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC;";
 
             var rows = new List<HistoryRow>();
             using (var conn = new NpgsqlConnection(cs))
@@ -413,14 +428,14 @@ namespace GKOOP
                 }
             }
 
-            grdHistory.AutoGenerateColumns = false;   // bạn đã cấu hình cột sẵn
-            grdHistory.DataSource = rows;             // cột "Điểm" nhớ đặt Name = "colScore"
+            grdHistory.AutoGenerateColumns = false;
+            grdHistory.DataSource = rows;
         }
+        #endregion
 
-
+        #region Start exam
         private async void StartSelectedExam()
         {
-
             if (_user == null || !_user.Role.Equals("STUDENT", StringComparison.OrdinalIgnoreCase))
             {
                 MessageBox.Show("Bạn cần đăng nhập bằng tài khoản Học viên để bắt đầu thi.");
@@ -431,66 +446,48 @@ namespace GKOOP
                 MessageBox.Show("Chọn một bài thi trước.");
                 return;
             }
-            var examId = row.Id; 
-            MessageBox.Show($"Bắt đầu: {row.Name}\nExamId: {examId}");
 
             using (var f = new ExamRoom(row.Id, _user))
             {
                 var dlg = f.ShowDialog(this);
                 if (dlg == DialogResult.OK)
                 {
-                    await LoadHistoryAsync();   
+                    await LoadHistoryAsync();
                     UpdateKpis();
                     await UpdateRankForSelectedExamAsync();
+                    await LoadLeaderboardForSelectedExamAsync();
                 }
             }
-
         }
+        #endregion
 
-
+        #region KPI + Rank + Leaderboard
         private void UpdateKpis()
         {
-           
+            // số bài thi mở
             var openExams = grdExams.Rows.Cast<DataGridViewRow>().Count(r => !r.IsNewRow);
             lblOpenExams.Text = $"Bài thi đang mở\n{openExams}";
 
-           
+            // --- Điểm cao nhất ---
             double best = 0;
-            var scoreCol = grdHistory.Columns["colScore"];
-            if (scoreCol != null)
+            if (grdHistory.DataSource is IEnumerable<HistoryRow> history)
             {
-                best = grdHistory.Rows.Cast<DataGridViewRow>()
-                    .Where(r => !r.IsNewRow && r.Cells[scoreCol.Index].Value != null)
-                    .Select(r =>
-                    {
-                        var s = r.Cells[scoreCol.Index].Value.ToString();
-                        return double.TryParse(s, out var v) ? v : 0.0;
-                    })
-                    .DefaultIfEmpty(0.0)
+                best = history
+                    .Where(h => h.Score > 0)
+                    .Select(h => h.Score)
+                    .DefaultIfEmpty(0)
                     .Max();
             }
+
             lblBestScore.Text = $"Điểm cao nhất\n{(best > 0 ? best.ToString("0.##") : "—")}";
 
-            
-            lblMyRank.Text = "Xếp hạng\n—";
+            // Xếp hạng giữ nguyên
+            if (!lblMyRank.Text.StartsWith("Xếp hạng"))
+                lblMyRank.Text = "Xếp hạng\n—";
         }
 
 
-        private void lblOpenExams_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void btnSetting_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void btnSetting_Click_1(object sender, EventArgs e)
-        {
-
-        }
-        // 1) Tính hạng của user trong 1 đề thi
+        // 1) Lấy hạng của user trong 1 đề thi
         private async Task<(int? rank, int total, double? myScore)>
             GetRankForExamAsync(Guid examId, Guid userId)
         {
@@ -530,23 +527,104 @@ WHERE user_id = @uid;";
             return (null, 0, null);
         }
 
-        // 2) Cập nhật label KPI “Xếp hạng” theo đề đang chọn
+        // 2) Update label KPI “Xếp hạng” theo đề đang chọn
         private async Task UpdateRankForSelectedExamAsync()
         {
-            // mặc định
             lblMyRank.Text = "Xếp hạng\n—";
             if (_user == null) return; // chưa đăng nhập
 
             if (grdExams.CurrentRow?.DataBoundItem is ExamRow row)
             {
-                var (rank, total, myScore) =
-                    await GetRankForExamAsync(row.Id, _user.Id);
-
+                var (rank, total, _) = await GetRankForExamAsync(row.Id, _user.Id);
                 lblMyRank.Text = rank.HasValue
                     ? $"Xếp hạng\n{rank}/{total}"
                     : "Xếp hạng\nChưa thi";
             }
         }
 
+        // 3) Bảng điểm cho giáo viên
+        private class LeaderboardRow
+        {
+            public int Rnk { get; set; }
+            public string Username { get; set; }
+            public string Name { get; set; }
+            public double Score { get; set; }
+            public string StartAt { get; set; } // dùng làm 'Thời gian' hiển thị
+            public string EndAt { get; set; }   // để trống cho khớp cột
+        }
+
+        private async Task LoadLeaderboardForSelectedExamAsync()
+        {
+            if (grpLeaderboard == null || grdLeaderboard == null) return;
+
+            // Chỉ GV nhìn thấy
+            bool canSeeLeaderboard = _user != null &&
+        (_user.Role.Equals("TEACHER", StringComparison.OrdinalIgnoreCase) ||
+         _user.Role.Equals("ADMIN", StringComparison.OrdinalIgnoreCase));
+
+            grpLeaderboard.Visible = canSeeLeaderboard;
+            if (!canSeeLeaderboard) { grdLeaderboard.DataSource = null; return; }
+
+            if (!(grdExams.CurrentRow?.DataBoundItem is ExamRow row))
+            { grdLeaderboard.DataSource = null; return; }
+
+            var cs = ConfigurationManager.ConnectionStrings["PgConn"].ConnectionString;
+            const string sql = @"
+WITH best AS (
+    SELECT user_id, MAX(score) AS best_score
+    FROM attempts
+    WHERE exam_id = @eid
+    GROUP BY user_id
+),
+last_time AS (
+    SELECT a.user_id, MAX(a.submitted_at) AS last_submit
+    FROM attempts a
+    JOIN best b ON b.user_id = a.user_id AND b.best_score = a.score
+    WHERE a.exam_id = @eid
+    GROUP BY a.user_id
+)
+SELECT DENSE_RANK() OVER (ORDER BY b.best_score DESC) AS rnk,
+       u.username, u.full_name,
+       b.best_score,
+       to_char(l.last_submit, 'DD/MM HH24:MI') AS last_submit
+FROM best b
+JOIN users u ON u.id = b.user_id
+LEFT JOIN last_time l ON l.user_id = b.user_id
+ORDER BY rnk, u.username;";
+
+            var rows = new List<LeaderboardRow>();
+            using (var conn = new NpgsqlConnection(cs))
+            {
+                await conn.OpenAsync();
+                using (var cmd = new NpgsqlCommand(sql, conn))
+                {
+                    cmd.Parameters.AddWithValue("@eid", row.Id);
+                    using (var rd = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await rd.ReadAsync())
+                        {
+                            rows.Add(new LeaderboardRow
+                            {
+                                Rnk = rd.GetInt32(0),
+                                Username = rd.IsDBNull(1) ? "" : rd.GetString(1),
+                                Name = rd.IsDBNull(2) ? "" : rd.GetString(2),
+                                Score = rd.IsDBNull(3) ? 0 : rd.GetDouble(3),
+                                StartAt = rd.IsDBNull(4) ? "—" : rd.GetString(4),
+                                EndAt = "" // cột trống cho khớp schema grid
+                            });
+                        }
+                    }
+                }
+            }
+
+            grdLeaderboard.AutoGenerateColumns = false;
+            grdLeaderboard.DataSource = rows;
+        }
+        #endregion
+
+        private void grdExams_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+
+        }
     }
 }

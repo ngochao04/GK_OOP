@@ -23,15 +23,19 @@ namespace GKOOP
                 throw new InvalidOperationException("Chỉ giáo viên được phép vào khu vực này.");
 
             _user = user;
+
             InitializeComponent();
             BuildUi();
-        }
-        private async void TeacherForm_Load(object sender, EventArgs e)
-        {
-            
-            await LoadExamsAsync();
+
+            // Nạp dữ liệu khi mở form
+            this.Load += TeacherForm_Load;
         }
 
+        private async void TeacherForm_Load(object sender, EventArgs e)
+        {
+            try { await LoadExamsAsync(); }
+            catch (Exception ex) { MessageBox.Show("Lỗi tải danh sách: " + ex.Message); }
+        }
 
         private void BuildUi()
         {
@@ -39,7 +43,13 @@ namespace GKOOP
             Width = 900; Height = 560;
             StartPosition = FormStartPosition.CenterParent;
 
-            grd = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AutoGenerateColumns = false, AllowUserToAddRows = false };
+            grd = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                AutoGenerateColumns = false,
+                AllowUserToAddRows = false
+            };
             grd.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Tên đề", DataPropertyName = "Name", Width = 260 });
             grd.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Môn", DataPropertyName = "Subject", Width = 180 });
             grd.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Số câu", DataPropertyName = "Total", Width = 70 });
@@ -47,7 +57,13 @@ namespace GKOOP
             grd.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Mở", DataPropertyName = "Start", Width = 120 });
             grd.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Đóng", DataPropertyName = "End", Width = 120 });
 
-            var panelTop = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 46, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
+            var panelTop = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 46,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(8)
+            };
             btnAdd = new Button { Text = "Thêm", Width = 90 };
             btnEdit = new Button { Text = "Sửa", Width = 90 };
             btnDel = new Button { Text = "Xóa", Width = 90 };
@@ -61,8 +77,6 @@ namespace GKOOP
             btnAdd.Click += async (s, e) => await AddExamAsync();
             btnEdit.Click += async (s, e) => await EditExamAsync();
             btnDel.Click += async (s, e) => await DeleteExamAsync();
-
-            Shown += async (s, e) => await LoadExamsAsync();
         }
 
         private class Row
@@ -115,15 +129,20 @@ namespace GKOOP
         // ==== ADD ====
         private async Task AddExamAsync()
         {
-            // Editor để nhập thông tin và add câu hỏi
-            using (var f = new ExamEditorDialog())
+            try
             {
-                if (f.ShowDialog(this) != DialogResult.OK) return;
+                using (var f = new ExamEditorDialog())
+                {
+                    if (f.ShowDialog(this) != DialogResult.OK) return;
 
-                // f.Draft chứa exam + list câu hỏi/đáp án
-                await CreateExamWithQuestionsAsync(f.Draft);
-                await LoadExamsAsync();
-                MessageBox.Show("Đã thêm bài thi.");
+                    await CreateExamWithQuestionsAsync(f.Draft);
+                    await LoadExamsAsync();
+                    MessageBox.Show("Đã thêm bài thi.");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi thêm bài thi: " + ex.Message);
             }
         }
 
@@ -133,15 +152,22 @@ namespace GKOOP
             if (!(grd.CurrentRow?.DataBoundItem is Row row))
             { MessageBox.Show("Chọn 1 bài thi để sửa."); return; }
 
-            // Load exam chi tiết + câu hỏi hiện có để đổ vào editor
-            ExamDraft draft = await LoadExamDraftAsync(row.Id);
-
-            using (var f = new ExamEditorDialog(draft))
+            try
             {
-                if (f.ShowDialog(this) != DialogResult.OK) return;
-                await UpdateExamWithQuestionsAsync(row.Id, f.Draft);
-                await LoadExamsAsync();
-                MessageBox.Show("Đã cập nhật bài thi.");
+                var draft = await LoadExamDraftAsync(row.Id);
+
+                using (var f = new ExamEditorDialog(draft))
+                {
+                    if (f.ShowDialog(this) != DialogResult.OK) return;
+
+                    await UpdateExamWithQuestionsAsync(row.Id, f.Draft);
+                    await LoadExamsAsync();
+                    MessageBox.Show("Đã cập nhật bài thi.");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi sửa bài thi: " + ex.Message);
             }
         }
 
@@ -151,7 +177,8 @@ namespace GKOOP
             if (!(grd.CurrentRow?.DataBoundItem is Row row))
             { MessageBox.Show("Chọn 1 bài thi để xóa."); return; }
 
-            var confirm = MessageBox.Show($"Xóa bài thi: {row.Name} ?", "Xác nhận", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            var confirm = MessageBox.Show($"Xóa bài thi: {row.Name} ?", "Xác nhận",
+                                          MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (confirm != DialogResult.Yes) return;
 
             var cs = ConfigurationManager.ConnectionStrings["PgConn"].ConnectionString;
@@ -172,7 +199,30 @@ namespace GKOOP
             MessageBox.Show("Đã xóa.");
         }
 
-        // ====== DB helpers ======
+        // ====== Helpers ======
+
+        /// Lấy (hoặc tạo) topic mặc định cho 1 subject
+        private async Task<Guid> EnsureDefaultTopicAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid subjectId)
+        {
+            const string sqlPick = @"SELECT id FROM topics WHERE subject_id=@sid ORDER BY name LIMIT 1;";
+            using (var pick = new NpgsqlCommand(sqlPick, conn, tx))
+            {
+                pick.Parameters.AddWithValue("@sid", subjectId);
+                var obj = await pick.ExecuteScalarAsync();
+                if (obj != null && obj != DBNull.Value)
+                    return (Guid)obj;
+            }
+
+            var tid = Guid.NewGuid();
+            const string sqlMake = @"INSERT INTO topics (id, subject_id, name) VALUES(@id, @sid, 'Chung');";
+            using (var make = new NpgsqlCommand(sqlMake, conn, tx))
+            {
+                make.Parameters.AddWithValue("@id", tid);
+                make.Parameters.AddWithValue("@sid", subjectId);
+                await make.ExecuteNonQueryAsync();
+            }
+            return tid;
+        }
 
         // Tạo bài thi + câu hỏi/đáp án trong 1 transaction
         private async Task CreateExamWithQuestionsAsync(ExamDraft draft)
@@ -182,42 +232,20 @@ namespace GKOOP
             using (var conn = new NpgsqlConnection(cs))
             {
                 await conn.OpenAsync();
-
-                using (var tx = conn.BeginTransaction())   // dùng BeginTransaction() đồng bộ
+                using (var tx = conn.BeginTransaction())
                 {
                     try
                     {
-                        // 1) Lấy (hoặc tạo) topic mặc định cho subject
-                        Guid topicId;
-                        using (var cmdFindTopic = new NpgsqlCommand(
-                            "SELECT id FROM topics WHERE subject_id = @sid ORDER BY name LIMIT 1;", conn, tx))
-                        {
-                            cmdFindTopic.Parameters.AddWithValue("@sid", draft.SubjectId);
-                            var obj = await cmdFindTopic.ExecuteScalarAsync();
-                            if (obj == null || obj == DBNull.Value)
-                            {
-                                topicId = Guid.NewGuid();
-                                using (var cmdNewTopic = new NpgsqlCommand(
-                                    "INSERT INTO topics(id, subject_id, name) VALUES(@id, @sid, 'Chung');", conn, tx))
-                                {
-                                    cmdNewTopic.Parameters.AddWithValue("@id", topicId);
-                                    cmdNewTopic.Parameters.AddWithValue("@sid", draft.SubjectId);
-                                    await cmdNewTopic.ExecuteNonQueryAsync();
-                                }
-                            }
-                            else
-                            {
-                                topicId = (Guid)obj;
-                            }
-                        }
+                        // 1) topic mặc định
+                        var defaultTopicId = await EnsureDefaultTopicAsync(conn, tx, draft.SubjectId);
 
-                        // 2) Thêm exam
+                        // 2) exams
                         var examId = Guid.NewGuid();
                         using (var cmdE = new NpgsqlCommand(@"
-                        INSERT INTO exams
-                            (id, subject_id, name, total_questions, level_mix, duration_minutes, start_time, end_time, created_by, created_at)
-                        VALUES
-                            (@id, @sid, @name, @total, '{}'::jsonb, @dur, NULL, NULL, @uid, now());", conn, tx))
+                            INSERT INTO exams
+                                (id, subject_id, name, total_questions, level_mix, duration_minutes, start_time, end_time, created_by, created_at)
+                            VALUES
+                                (@id, @sid, @name, @total, '{}'::jsonb, @dur, NULL, NULL, @uid, now());", conn, tx))
                         {
                             cmdE.Parameters.AddWithValue("@id", examId);
                             cmdE.Parameters.AddWithValue("@sid", draft.SubjectId);
@@ -228,20 +256,19 @@ namespace GKOOP
                             await cmdE.ExecuteNonQueryAsync();
                         }
 
-                        // 3) Thêm questions + answers + mapping exam_questions
+                        // 3) questions + answers + mapping
                         int ord = 1;
                         foreach (var q in draft.Questions)
                         {
                             var qid = Guid.NewGuid();
+                            var tid = (q.TopicId != Guid.Empty) ? q.TopicId : defaultTopicId;
 
                             using (var cmdQ = new NpgsqlCommand(@"
-                            INSERT INTO questions
-                                (id, topic_id, content, level, explanation, created_by, created_at)
-                            VALUES
-                                (@id, @topic, @content, 1, NULL, @uid, now());", conn, tx))
+                                INSERT INTO questions (id, topic_id, content, level, explanation, created_by, created_at)
+                                VALUES (@id, @tid, @content, 1, NULL, @uid, now());", conn, tx))
                             {
                                 cmdQ.Parameters.AddWithValue("@id", qid);
-                                cmdQ.Parameters.AddWithValue("@topic", topicId);        // đảm bảo có topic_id
+                                cmdQ.Parameters.AddWithValue("@tid", tid);
                                 cmdQ.Parameters.AddWithValue("@content", q.Content);
                                 cmdQ.Parameters.AddWithValue("@uid", _user.Id);
                                 await cmdQ.ExecuteNonQueryAsync();
@@ -251,8 +278,8 @@ namespace GKOOP
                             {
                                 var aid = Guid.NewGuid();
                                 using (var cmdA = new NpgsqlCommand(@"
-                                INSERT INTO answers (id, question_id, content, is_correct)
-                                VALUES (@id, @qid, @content, @ok);", conn, tx))
+                                    INSERT INTO answers (id, question_id, content, is_correct)
+                                    VALUES (@id, @qid, @content, @ok);", conn, tx))
                                 {
                                     cmdA.Parameters.AddWithValue("@id", aid);
                                     cmdA.Parameters.AddWithValue("@qid", qid);
@@ -263,8 +290,8 @@ namespace GKOOP
                             }
 
                             using (var cmdEQ = new NpgsqlCommand(@"
-                            INSERT INTO exam_questions (id, exam_id, question_id, order_no)
-                            VALUES (@id, @eid, @qid, @ord);", conn, tx))
+                                INSERT INTO exam_questions (id, exam_id, question_id, order_no)
+                                VALUES (@id, @eid, @qid, @ord);", conn, tx))
                             {
                                 cmdEQ.Parameters.AddWithValue("@id", Guid.NewGuid());
                                 cmdEQ.Parameters.AddWithValue("@eid", examId);
@@ -278,14 +305,12 @@ namespace GKOOP
                     }
                     catch
                     {
-                        try { tx.Rollback(); } catch { /* ignore */ }
+                        try { tx.Rollback(); } catch { }
                         throw;
                     }
                 }
             }
         }
-
-
 
         // Tải exam + câu hỏi để sửa
         private async Task<ExamDraft> LoadExamDraftAsync(Guid examId)
@@ -293,18 +318,16 @@ namespace GKOOP
             var cs = ConfigurationManager.ConnectionStrings["PgConn"].ConnectionString;
             var draft = new ExamDraft { Questions = new List<QuestionDto>() };
 
-            // exam info
             const string sqlE = @"
                 SELECT e.name, e.subject_id, e.duration_minutes
                 FROM exams e WHERE e.id=@id;";
-            // questions
             const string sqlQ = @"
                 SELECT eq.order_no, q.id, q.content
                 FROM exam_questions eq JOIN questions q ON q.id = eq.question_id
                 WHERE eq.exam_id=@id ORDER BY eq.order_no;";
-            // answers
-            const string sqlA = @"SELECT a.id, a.question_id, a.content, a.is_correct
-                                  FROM answers a WHERE a.question_id = @qid ORDER BY a.id;";
+            const string sqlA = @"
+                SELECT a.id, a.question_id, a.content, a.is_correct
+                FROM answers a WHERE a.question_id = @qid ORDER BY a.id;";
 
             using (var conn = new NpgsqlConnection(cs))
             {
@@ -362,99 +385,118 @@ namespace GKOOP
                     }
                 }
 
-                // Gán lại ID=Guid.Empty để khi lưu SỬA, mình xóa & chèn mới cho gọn (dựa trên logic bạn muốn)
+                // chuyển về bản nháp: xóa Id để lần lưu sẽ xóa cũ/ghi mới
                 draft.Questions = temp.Select(q => new QuestionDto
                 {
                     Id = Guid.Empty,
+                    TopicId = Guid.Empty, // sẽ fallback default khi lưu
                     Content = q.Content,
-                    Answers = q.Answers.Select(a => new AnswerDto { Id = Guid.Empty, Text = a.Text, IsCorrect = a.IsCorrect }).ToList()
+                    Answers = q.Answers.Select(a => new AnswerDto
+                    {
+                        Id = Guid.Empty,
+                        Text = a.Text,
+                        IsCorrect = a.IsCorrect
+                    }).ToList()
                 }).ToList();
             }
 
             return draft;
         }
 
-        // Cập nhật:
-
+        // Cập nhật (xóa set cũ & ghi lại set mới)
         private async Task UpdateExamWithQuestionsAsync(Guid examId, ExamDraft draft)
         {
             var cs = ConfigurationManager.ConnectionStrings["PgConn"].ConnectionString;
+
             using (var conn = new NpgsqlConnection(cs))
             {
                 await conn.OpenAsync();
                 using (var tx = conn.BeginTransaction())
                 {
-                    // Xóa answers -> questions -> exam_questions cũ (các câu tạo riêng cho đề)
-                    const string sqlDelAns = @"
-                        DELETE FROM answers a WHERE a.question_id IN
-                        (SELECT q.id FROM exam_questions eq JOIN questions q ON q.id = eq.question_id WHERE eq.exam_id=@eid);";
-                    const string sqlDelQ = @"
-                        DELETE FROM questions q WHERE q.id IN
-                        (SELECT eq.question_id FROM exam_questions eq WHERE eq.exam_id=@eid);";
-                    const string sqlDelEQ = @"DELETE FROM exam_questions WHERE exam_id=@eid;";
-
-                    using (var cmd = new NpgsqlCommand(sqlDelAns, conn, tx)) { cmd.Parameters.AddWithValue("@eid", examId); await cmd.ExecuteNonQueryAsync(); }
-                    using (var cmd = new NpgsqlCommand(sqlDelQ, conn, tx)) { cmd.Parameters.AddWithValue("@eid", examId); await cmd.ExecuteNonQueryAsync(); }
-                    using (var cmd = new NpgsqlCommand(sqlDelEQ, conn, tx)) { cmd.Parameters.AddWithValue("@eid", examId); await cmd.ExecuteNonQueryAsync(); }
-
-                    // Update exams info
-                    const string sqlUpdateExam = @"
-                        UPDATE exams SET subject_id=@sid, name=@name, duration_minutes=@dur, total_questions=@total
-                        WHERE id=@id;";
-                    using (var cmd = new NpgsqlCommand(sqlUpdateExam, conn, tx))
+                    try
                     {
-                        cmd.Parameters.AddWithValue("@sid", draft.SubjectId);
-                        cmd.Parameters.AddWithValue("@name", draft.Name);
-                        cmd.Parameters.AddWithValue("@dur", draft.DurationMinutes);
-                        cmd.Parameters.AddWithValue("@total", draft.Questions.Count);
-                        cmd.Parameters.AddWithValue("@id", examId);
-                        await cmd.ExecuteNonQueryAsync();
-                    }
+                        // Xóa answers -> questions -> exam_questions cũ
+                        const string sqlDelAns = @"
+                            DELETE FROM answers a WHERE a.question_id IN
+                            (SELECT q.id FROM exam_questions eq JOIN questions q ON q.id = eq.question_id WHERE eq.exam_id=@eid);";
+                        const string sqlDelQ = @"
+                            DELETE FROM questions q WHERE q.id IN
+                            (SELECT eq.question_id FROM exam_questions eq WHERE eq.exam_id=@eid);";
+                        const string sqlDelEQ = @"DELETE FROM exam_questions WHERE exam_id=@eid;";
 
-                    // Ghi lại bộ câu hỏi như khi Create
-                    int order = 1;
-                    foreach (var q in draft.Questions)
-                    {
-                        var qid = Guid.NewGuid();
-                        const string sqlQ = @"INSERT INTO questions (id,topic_id, content, level, explanation, created_by, created_at)
-                                              VALUES (@id,@tid, @content, 1, NULL, @uid, now());";
-                        using (var cmdQ = new NpgsqlCommand(sqlQ, conn, tx))
+                        using (var cmd = new NpgsqlCommand(sqlDelAns, conn, tx)) { cmd.Parameters.AddWithValue("@eid", examId); await cmd.ExecuteNonQueryAsync(); }
+                        using (var cmd = new NpgsqlCommand(sqlDelQ, conn, tx)) { cmd.Parameters.AddWithValue("@eid", examId); await cmd.ExecuteNonQueryAsync(); }
+                        using (var cmd = new NpgsqlCommand(sqlDelEQ, conn, tx)) { cmd.Parameters.AddWithValue("@eid", examId); await cmd.ExecuteNonQueryAsync(); }
+
+                        // Update exams info
+                        const string sqlUpdateExam = @"
+                            UPDATE exams SET subject_id=@sid, name=@name, duration_minutes=@dur, total_questions=@total
+                            WHERE id=@id;";
+                        using (var cmd = new NpgsqlCommand(sqlUpdateExam, conn, tx))
                         {
-                            cmdQ.Parameters.AddWithValue("@id", qid);
-                            cmdQ.Parameters.AddWithValue("@tid", q.TopicId);
-                            cmdQ.Parameters.AddWithValue("@content", q.Content);
-                            cmdQ.Parameters.AddWithValue("@uid", _user.Id);
-                            await cmdQ.ExecuteNonQueryAsync();
+                            cmd.Parameters.AddWithValue("@sid", draft.SubjectId);
+                            cmd.Parameters.AddWithValue("@name", draft.Name);
+                            cmd.Parameters.AddWithValue("@dur", draft.DurationMinutes);
+                            cmd.Parameters.AddWithValue("@total", draft.Questions.Count);
+                            cmd.Parameters.AddWithValue("@id", examId);
+                            await cmd.ExecuteNonQueryAsync();
                         }
 
-                        foreach (var a in q.Answers)
+                        // topic mặc định để fallback
+                        var defaultTopicId = await EnsureDefaultTopicAsync(conn, tx, draft.SubjectId);
+
+                        // Ghi lại bộ câu hỏi
+                        int order = 1;
+                        foreach (var q in draft.Questions)
                         {
-                            var aid = Guid.NewGuid();
-                            const string sqlA = @"INSERT INTO answers (id, question_id, content, is_correct)
-                                                  VALUES (@id, @qid, @content, @correct);";
-                            using (var cmdA = new NpgsqlCommand(sqlA, conn, tx))
+                            var qid = Guid.NewGuid();
+                            var tid = (q.TopicId != Guid.Empty) ? q.TopicId : defaultTopicId;
+
+                            const string sqlQ = @"INSERT INTO questions (id, topic_id, content, level, explanation, created_by, created_at)
+                                                  VALUES (@id, @tid, @content, 1, NULL, @uid, now());";
+                            using (var cmdQ = new NpgsqlCommand(sqlQ, conn, tx))
                             {
-                                cmdA.Parameters.AddWithValue("@id", aid);
-                                cmdA.Parameters.AddWithValue("@qid", qid);
-                                cmdA.Parameters.AddWithValue("@content", a.Text);
-                                cmdA.Parameters.AddWithValue("@correct", a.IsCorrect);
-                                await cmdA.ExecuteNonQueryAsync();
+                                cmdQ.Parameters.AddWithValue("@id", qid);
+                                cmdQ.Parameters.AddWithValue("@tid", tid);
+                                cmdQ.Parameters.AddWithValue("@content", q.Content);
+                                cmdQ.Parameters.AddWithValue("@uid", _user.Id);
+                                await cmdQ.ExecuteNonQueryAsync();
+                            }
+
+                            foreach (var a in q.Answers)
+                            {
+                                var aid = Guid.NewGuid();
+                                const string sqlA = @"INSERT INTO answers (id, question_id, content, is_correct)
+                                                      VALUES (@id, @qid, @content, @correct);";
+                                using (var cmdA = new NpgsqlCommand(sqlA, conn, tx))
+                                {
+                                    cmdA.Parameters.AddWithValue("@id", aid);
+                                    cmdA.Parameters.AddWithValue("@qid", qid);
+                                    cmdA.Parameters.AddWithValue("@content", a.Text);
+                                    cmdA.Parameters.AddWithValue("@correct", a.IsCorrect);
+                                    await cmdA.ExecuteNonQueryAsync();
+                                }
+                            }
+
+                            const string sqlEQ = @"INSERT INTO exam_questions (id, exam_id, question_id, order_no)
+                                                   VALUES (@id, @eid, @qid, @ord);";
+                            using (var cmdEQ = new NpgsqlCommand(sqlEQ, conn, tx))
+                            {
+                                cmdEQ.Parameters.AddWithValue("@id", Guid.NewGuid());
+                                cmdEQ.Parameters.AddWithValue("@eid", examId);
+                                cmdEQ.Parameters.AddWithValue("@qid", qid);
+                                cmdEQ.Parameters.AddWithValue("@ord", order++);
+                                await cmdEQ.ExecuteNonQueryAsync();
                             }
                         }
 
-                        const string sqlEQ = @"INSERT INTO exam_questions (id, exam_id, question_id, order_no)
-                                               VALUES (@id, @eid, @qid, @ord);";
-                        using (var cmdEQ = new NpgsqlCommand(sqlEQ, conn, tx))
-                        {
-                            cmdEQ.Parameters.AddWithValue("@id", Guid.NewGuid());
-                            cmdEQ.Parameters.AddWithValue("@eid", examId);
-                            cmdEQ.Parameters.AddWithValue("@qid", qid);
-                            cmdEQ.Parameters.AddWithValue("@ord", order++);
-                            await cmdEQ.ExecuteNonQueryAsync();
-                        }
+                        tx.Commit();
                     }
-
-                    await tx.CommitAsync();
+                    catch
+                    {
+                        try { tx.Rollback(); } catch { }
+                        throw;
+                    }
                 }
             }
         }
